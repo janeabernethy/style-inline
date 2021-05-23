@@ -35,7 +35,7 @@ func changeIdsToClasses(svgString: String) -> Result<String, Error> {
     let idRanges = idRegex.matches(in: updatedSVGString, options: [], range: svgNSRange)
     
     
-    //2. find IDs used
+    //a. find IDs used
     guard idRanges.count > 0 else {
         return .failure(SVGConversionError.idsNotFound)
     }
@@ -45,19 +45,20 @@ func changeIdsToClasses(svgString: String) -> Result<String, Error> {
     var ids = [String]()
     
     idRanges.forEach { result in
+        //b. add ids to array without the #
         let startIndex = updatedSVGString.index(updatedSVGString.startIndex, offsetBy: result.range.location + 1)
         let endIndex = updatedSVGString.index(startIndex, offsetBy: result.range.length - 1)
         let id = updatedSVGString[startIndex..<endIndex]
         ids.append(String(id))
         
+        //c. replace ids with  classes in <style></style>
         let hashStart = updatedSVGString.index(updatedSVGString.startIndex, offsetBy: result.range.location)
         let hashEnd = updatedSVGString.index(hashStart, offsetBy: 1)
         let hashRange: Range = hashStart..<hashEnd
         updatedSVGString.replaceSubrange(hashRange, with: ".")
     }
     
-    //4. replace ids with classes in HTML
-
+    //d. replace ids with classes in HTML
     let svgStartIndex = updatedSVGString.index(updatedSVGString.startIndex, offsetBy: 0)
     let svgEndIndex = updatedSVGString.index(svgStartIndex, offsetBy: updatedSVGString.count)
     let svgRange: Range = svgStartIndex..<svgEndIndex
@@ -71,6 +72,8 @@ func changeIdsToClasses(svgString: String) -> Result<String, Error> {
 
 func writeNewSVGFile(svgString: String, existingFilePath: String) -> Result<String, Error> {
     let pathComponents = existingFilePath.components(separatedBy: "/")
+    
+    //a. create new filename
     guard let newFilename = pathComponents.last?.replacingOccurrences(of: ".svg", with: "-updated.svg") else {
         return .failure(SVGConversionError.newFileName)
     }
@@ -79,14 +82,17 @@ func writeNewSVGFile(svgString: String, existingFilePath: String) -> Result<Stri
     newPathComponents.append(String(newFilename))
     let newPath = newPathComponents.joined(separator: "/")
     
+    //b. create new filepath
     guard let outputURL = URL(string: "file://" + newPath) else {
         return .failure(SVGConversionError.createFile(filePath: newPath))
     }
     
+    //c. convert string to data to write to file
     guard let data = svgString.data(using: String.Encoding.utf8) else {
         return .failure(SVGConversionError.convertingStringToData)
     }
-        
+    
+    //d. write data to file
     do {
         try data.write(to: outputURL)
         return .success(newPath)
