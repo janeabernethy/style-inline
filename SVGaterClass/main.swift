@@ -2,71 +2,111 @@
 
 import Foundation
 
+struct StyleInfo {
+    var id: String
+    var style: String
+    var idWithStyleRange: NSRange
+}
+
 enum SVGConversionError: Error {
     case idsNotFound
     case newFileName
     case createFile(filePath: String)
     case convertingStringToData
     case writingToFile(systemError: NSError)
+    case couldNotFindMatch(matchLocation: String)
+    case couldNotConvertRangeToNSRange
 }
 
 extension SVGConversionError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .idsNotFound:
-            return NSLocalizedString("Could not convert IDs to Classes - no IDs found", comment: "idsNotFound")
+            return NSLocalizedString("Could not convert IDs to Classes - no IDs found", comment: "")
         case .newFileName:
-            return NSLocalizedString("Error creating new file with name", comment: "newFileName")
+            return NSLocalizedString("Error creating new file with name", comment: "")
         case .createFile(let filePath):
-            return NSLocalizedString("Could not create new SVG file at path: \(filePath)", comment: "couldNotCreateFile")
+            return NSLocalizedString("Could not create new SVG file at path: \(filePath)", comment: "")
         case .convertingStringToData:
-            return NSLocalizedString("Could not convert SVG string to data type", comment: "couldNotConvertStringToData")
+            return NSLocalizedString("Could not convert SVG string to data type", comment: "")
         case .writingToFile(let systemError):
-            return "Error writing new SVG to file: \(systemError.localizedDescription)"
+            return NSLocalizedString("Error writing new SVG to file: \(systemError.localizedDescription)", comment: "")
+        case .couldNotFindMatch(let location):
+            return NSLocalizedString("Could not find regex match for: \(location)", comment: "")
+        case .couldNotConvertRangeToNSRange:
+            return NSLocalizedString("Could not convert NSRange to Range", comment: "")
         }
     }
 }
 
-func changeIdsToClasses(svgString: String) -> Result<String, Error> {
+func changeIdsToInline(svgString: String) -> Result<String, Error> {
     var updatedSVGString = svgString
 
     let idRegex = try! NSRegularExpression(pattern: "#[\\w\\d]+\\S")
+    let idWithStyleRegex = try! NSRegularExpression(pattern: "#[\\w\\d\\s]+\\{[\\w\\d\\s:]+\\}")
+    let styleRegex = try! NSRegularExpression(pattern: "\\{[\\w\\d\\s:]+\\}")
     let svgNSRange = NSRange(location: 0, length: updatedSVGString.utf16.count)
-    let idRanges = idRegex.matches(in: updatedSVGString, options: [], range: svgNSRange)
+    let idWithStyleRanges = idWithStyleRegex.matches(in: updatedSVGString, options: [], range: svgNSRange)
     
     
     //a. find IDs used
-    guard idRanges.count > 0 else {
+    guard idWithStyleRanges.count > 0 else {
         return .failure(SVGConversionError.idsNotFound)
     }
     
-    print("**** Found IDS: \(idRanges.count)");
+    print("**** Found IDS: \(idWithStyleRanges.count)");
     
-    var ids = [String]()
-    
-    idRanges.forEach { result in
+    var allStyles = [StyleInfo]()
+  
+    for result in idWithStyleRanges {
         //b. add ids to array without the #
-        let startIndex = updatedSVGString.index(updatedSVGString.startIndex, offsetBy: result.range.location + 1)
-        let endIndex = updatedSVGString.index(startIndex, offsetBy: result.range.length - 1)
-        let id = updatedSVGString[startIndex..<endIndex]
-        ids.append(String(id))
+        let startIndex = updatedSVGString.index(updatedSVGString.startIndex, offsetBy: result.range.location)
+        let endIndex = updatedSVGString.index(startIndex, offsetBy: result.range.length)
         
-        //c. replace ids with  classes in <style></style>
-        let hashStart = updatedSVGString.index(updatedSVGString.startIndex, offsetBy: result.range.location)
-        let hashEnd = updatedSVGString.index(hashStart, offsetBy: 1)
-        let hashRange: Range = hashStart..<hashEnd
-        updatedSVGString.replaceSubrange(hashRange, with: ".")
+        let idWithStyleString = String(updatedSVGString[startIndex..<endIndex])
+        let idWithStyleRange = NSRange(location: 0, length: idWithStyleString.utf16.count)
+ 
+        
+        //get id
+        guard let idRange = idRegex.firstMatch(in: idWithStyleString, options: [], range: idWithStyleRange) else {
+            return .failure(SVGConversionError.couldNotFindMatch(matchLocation: "id matching"))
+        }
+        let startIDIndex = idWithStyleString.index(idWithStyleString.startIndex, offsetBy: idRange.range.location + 1)
+        let endIDIndex = idWithStyleString.index(startIDIndex, offsetBy: idRange.range.length - 1)
+        let id = String(idWithStyleString[startIDIndex..<endIDIndex])
+        
+        //get style
+        guard  let originalStyleRange = styleRegex.firstMatch(in: idWithStyleString, options: [], range: idWithStyleRange) else {
+            return .failure(SVGConversionError.couldNotFindMatch(matchLocation: "style matching"))
+        }
+     
+        let startStyleIndex = idWithStyleString.index(idWithStyleString.startIndex, offsetBy: originalStyleRange.range.location)
+        let endStyleIndex = idWithStyleString.index(startStyleIndex, offsetBy: originalStyleRange.range.length)
+        var style = String(idWithStyleString[startStyleIndex..<endStyleIndex])
+       
+        style.removeLast()
+        style.removeFirst()
+ 
+        let styleInfo = StyleInfo(id: id, style: style, idWithStyleRange: result.range)
+        allStyles.append(styleInfo)
     }
     
-    //d. replace ids with classes in HTML
-    let svgStartIndex = updatedSVGString.index(updatedSVGString.startIndex, offsetBy: 0)
-    let svgEndIndex = updatedSVGString.index(svgStartIndex, offsetBy: updatedSVGString.count)
-    let svgRange: Range = svgStartIndex..<svgEndIndex
-    for id in ids {
-        let idSubstring = "id=\"\(id)\""
-        let classSubstring = "class=\"\(id)\""
-        updatedSVGString = updatedSVGString.replacingOccurrences(of: idSubstring, with: classSubstring, options: [], range: svgRange)
+    //remove style and Ids
+    allStyles.reverse()
+    for styleInfo in allStyles {
+        guard let range = Range(styleInfo.idWithStyleRange, in: updatedSVGString) else {
+            return .failure(SVGConversionError.couldNotConvertRangeToNSRange)
+        }
+        updatedSVGString.removeSubrange(range)
     }
+
+    // update SVG body to contain style
+    allStyles.forEach { styleInfo in
+        let idInBody = "id=\"\(styleInfo.id)\""
+        let idWithStyleInBody = "\(idInBody) style=\"\(styleInfo.style)\""
+        updatedSVGString = updatedSVGString.replacingOccurrences(of: idInBody, with: idWithStyleInBody)
+    }
+   
     return .success(updatedSVGString)
 }
 
@@ -114,7 +154,7 @@ do {
     let contents = try String(contentsOfFile: path, encoding: .utf8)
     
     //2. update contents of file
-    let updatedSVGResult = changeIdsToClasses(svgString: contents)
+    let updatedSVGResult = changeIdsToInline(svgString: contents)
     switch updatedSVGResult {
     case .success(let updatedString):
         //3. write to new SVG file
