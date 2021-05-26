@@ -2,7 +2,7 @@
 Converts style of an SVG file from a style tag to be inline
 
 Usage: 
-./main.swift {pathToYour.svg}
+`./main.swift {pathToYour.svg}`
 
 Output:
-{pathToYour-updated.svg}
+`{pathToYour-updated.svg}`
